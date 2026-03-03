@@ -1,0 +1,7 @@
+.venv/
+.env
+.dev/
+.vscode/
+__pycache__/
+*.pyc
+uvicorn_*.log
