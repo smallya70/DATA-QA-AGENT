@@ -5,6 +5,9 @@ $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $devDir = Join-Path $projectRoot ".dev"
 $backendPidFile = Join-Path $devDir "backend.pid"
 $frontendPidFile = Join-Path $devDir "frontend.pid"
+$backendPort = 8099
+$frontendPort = 8501
+$backendUrl = "http://127.0.0.1:$backendPort"
 
 if (-not (Test-Path $pythonExe)) {
     throw "Virtual environment Python not found at $pythonExe"
@@ -21,20 +24,21 @@ if (Test-Path $stopScript) {
 
 $backendProc = Start-Process `
     -FilePath $pythonExe `
-    -ArgumentList "-m", "uvicorn", "app.main:app", "--reload", "--port", "8092" `
+    -ArgumentList "-m", "uvicorn", "app.main:app", "--port", "$backendPort" `
     -WorkingDirectory $projectRoot `
     -PassThru
 
 Start-Sleep -Seconds 1
 
 $frontendProc = Start-Process `
-    -FilePath $pythonExe `
-    -ArgumentList "-m", "streamlit", "run", "app/streamlit_app.py", "--server.port", "8501" `
+    -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-Command", "$env:BACKEND_URL='$backendUrl'; & '$pythonExe' -m streamlit run app/streamlit_app.py --server.port $frontendPort" `
     -WorkingDirectory $projectRoot `
     -PassThru
 
 Set-Content -Path $backendPidFile -Value $backendProc.Id
 Set-Content -Path $frontendPidFile -Value $frontendProc.Id
 
-Write-Host "Started FastAPI on http://127.0.0.1:8092 (PID $($backendProc.Id))" -ForegroundColor Green
-Write-Host "Started Streamlit on http://127.0.0.1:8501 (PID $($frontendProc.Id))" -ForegroundColor Green
+Write-Host "Started FastAPI on $backendUrl (PID $($backendProc.Id))" -ForegroundColor Green
+Write-Host "Started Streamlit on http://127.0.0.1:$frontendPort (PID $($frontendProc.Id))" -ForegroundColor Green
+

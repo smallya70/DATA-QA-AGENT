@@ -1,0 +1,162 @@
+Enhance this FastAPI + Streamlit analytics platform to replace most direct LLM SQL generation with a schema-safe deterministic SQL engine.
+
+Goal:
+Implement this architecture:
+
+Question → QuerySpec → deterministic SQL builder → SQL validator → execute
+
+The LLM should only produce structured intent (QuerySpec), not raw SQL.
+
+Important constraints:
+- Keep existing endpoints working, especially /upload_csv and /ask_sql.
+- Do not break rules_registry CRUD, upload QA, or generated registry rules.
+- Keep dataset_id scoping and SELECT-only safety.
+- If a question cannot be mapped safely, return degraded_mode with guidance instead of generating incorrect SQL.
+- Keep current LLM SQL path behind feature flags and disabled by default.
+
+------------------------------------------------
+PHASE 1 (IMPLEMENT FIRST)
+------------------------------------------------
+
+Implement only these components first.
+
+1. QuerySpec model
+
+Create a Pydantic model with fields:
+
+intent: str
+target_sheet: str | None
+measures: list[dict]
+dimensions: list[str]
+filters: list[dict]
+order_by: list[dict]
+limit: int | None
+time_grain: str | None
+join_path: list[dict]
+confidence: float
+warnings: list[str]
+source: str | None   # registry or planner
+
+File:
+app/query_spec.py
+
+------------------------------------------------
+
+2. Deterministic SQL Builder
+
+Create a module that converts QuerySpec into SQL.
+
+Rules:
+
+- SQL must be SELECT-only
+- dataset_id filter must always be included
+- only reference real sheets and real row_json keys
+- joins must use known relationships
+- aggregation allowed only on numeric columns
+- enforce LIMIT
+- no semicolons
+- no write operations
+
+Output:
+
+(sql_string, parameters)
+
+File:
+app/sql_builder.py
+
+------------------------------------------------
+
+3. SQL Validator
+
+Create validator that checks:
+
+- SQL is SELECT only
+- dataset_id is present
+- referenced sheets exist
+- referenced row_json keys exist
+- joins follow known relationships
+- aggregation is valid for column types
+- limit exists
+
+Return list of validation issues.
+
+File:
+app/sql_validator.py
+
+------------------------------------------------
+
+4. Integrate with /ask_sql
+
+Modify /ask_sql flow:
+
+Load dataset metadata
+
+Try registry rule first.
+
+If registry rule exists → execute existing SQL.
+
+Otherwise:
+
+1. Build QuerySpec (temporary stub)
+2. Pass QuerySpec to SQL builder
+3. Validate SQL
+4. Execute only if validation passes
+
+If validation fails:
+
+Return:
+
+degraded_mode = True
+guidance explaining why the query is unsafe.
+
+------------------------------------------------
+
+5. Feature Flags
+
+Add environment flags:
+
+ALLOW_DIRECT_LLM_SQL=false
+ALLOW_LLM_SQL_REPAIR=false
+
+Old behavior remains available but disabled.
+
+------------------------------------------------
+
+6. Do NOT refactor the whole project yet.
+
+Add these modules without deleting existing code.
+
+Prefer extending current helper functions.
+
+------------------------------------------------
+
+7. Testing
+
+Add tests for:
+
+- QuerySpec validation
+- SQL builder for simple aggregation
+- SQL builder for join
+- invalid column rejection
+- invalid aggregation rejection
+- SQL validator catching unsafe SQL
+
+------------------------------------------------
+
+IMPLEMENT ONLY PHASE 1 NOW.
+
+Do not implement planner yet.
+
+After Phase 1 is stable, we will implement Phase 2 (LLM planner).
+
+
+
+If you want the next step, I’d do one of these:
+
+Add a few more deterministic intent mappings so billing and sales questions cover more real-world phrasing before Phase 2.
+Start Phase 2 and replace the stub planner with an LLM that produces QuerySpec only, never raw SQL.
+
+SELECT
+SUM(NULLIF(regexp_replace((s.row_json->>'TotalPrice'), '[^0-9.\-]', '', 'g'), '')::numeric) AS sum_total_price
+FROM dataset_rows s
+WHERE s.dataset_id = %(dataset_id)s AND s.sheet_name = 'Sheet1' AND LOWER(COALESCE(s.row_json->>'Region', '')) = %(filter_0)s AND LOWER(COALESCE(s.row_json->>'Product', '')) = %(filter_1)s

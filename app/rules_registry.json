@@ -1,0 +1,124 @@
+[
+  {
+    "id": "dashboard_overview",
+    "intent": "dashboard_overview",
+    "enabled": true,
+    "priority": 10,
+    "patterns": [
+      "\\b(create|build|generate|show)\\b.*\\b(dashboard|dash\\s*board|charts?)\\b",
+      "\\bdashboard\\b.*\\b(excel|sheet|overview|summary)\\b"
+    ],
+    "builder": "dashboard_overview"
+  },
+  {
+    "id": "highest_profit_state_year",
+    "intent": "highest_profit_state_year",
+    "enabled": true,
+    "priority": 20,
+    "patterns": [
+      "\\b(state)\\b.*\\b(highest|top|maximum|max)\\b.*\\b(profit)\\b.*\\b(19|20)\\d{2}\\b",
+      "\\b(highest|top|maximum|max)\\b.*\\b(profit)\\b.*\\bstate\\b.*\\b(19|20)\\d{2}\\b"
+    ],
+    "builder": "highest_profit_state_year"
+  },
+  {
+    "id": "month_year_metric_total",
+    "intent": "month_year_metric_total",
+    "enabled": true,
+    "priority": 30,
+    "patterns": [
+      "\\b(month|january|february|march|april|may|june|july|august|september|october|november|december)\\b.*\\b(19|20)\\d{2}\\b.*\\b(revenue|sales|cost|profit|tax|discount|quantity|qty|units)\\b",
+      "\\b(revenue|sales|cost|profit|tax|discount|quantity|qty|units)\\b.*\\b(month|january|february|march|april|may|june|july|august|september|october|november|december)\\b.*\\b(19|20)\\d{2}\\b"
+    ],
+    "builder": "month_year_metric_total"
+  },
+  {
+    "id": "recommended_action_customer",
+    "intent": "recommended_action_customer",
+    "enabled": true,
+    "priority": 40,
+    "patterns": [
+      "\\b(recommended[_\\s]*action|action)\\b.*\\binvoice now\\b.*\\b(customer|customers|who)\\b",
+      "\\b(customer|customers|who)\\b.*\\b(recommended[_\\s]*action|action)\\b.*\\binvoice now\\b"
+    ],
+    "builder": "recommended_action_customer"
+  },
+  {
+    "id": "04c8a60f-99da-4abd-86ab-56b5392e599b",
+    "intent": "ops_events_contracts_ratecard_customer_summary",
+    "enabled": true,
+    "priority": 44,
+    "patterns": [
+      "(?i)join\\s+ops[_ ]events\\s+and\\s+contracts[_ ]ratecard\\s+on\\s+contract[_ ]id\\s*=\\s*contract[_ ]id.*summari[sz]e\\s+key\\s+metrics\\s+by\\s+customer",
+      "(?i)ops[_ ]events.*contracts[_ ]ratecard.*key\\s+metrics.*customer"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer_id'), ''), NULLIF(TRIM(c.row_json->>'customer_id'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT s.row_json->>'event_id') AS event_count,\n    COUNT(DISTINCT s.row_json->>'contract_id') AS contract_count,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((s.row_json->>'quantity'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_quantity,\n    COALESCE(SUM(\n        COALESCE(NULLIF(regexp_replace((s.row_json->>'quantity'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0) *\n        COALESCE(NULLIF(regexp_replace((c.row_json->>'price_per_unit'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)\n    ), 0) AS total_expected_amount\nFROM dataset_rows s\nLEFT JOIN dataset_rows c\n    ON c.dataset_id = s.dataset_id\n    AND c.sheet_name = 'Contracts_RateCard'\n    AND NULLIF(LOWER(TRIM(c.row_json->>'contract_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'contract_id')), '')\n    AND NULLIF(LOWER(TRIM(c.row_json->>'customer_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'customer_id')), '')\n    AND NULLIF(LOWER(TRIM(c.row_json->>'service_type')), '') = NULLIF(LOWER(TRIM(s.row_json->>'service_type')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\nGROUP BY 1\nORDER BY total_expected_amount DESC, event_count DESC\nLIMIT %(limit)s",
+    "description": "Customer summary join between Ops_Events and Contracts_RateCard using quantity and price_per_unit to compute expected amount."
+  },
+  {
+    "id": "d20d508d-a71d-4a70-9549-0463a5e60c6d",
+    "intent": "ops_events_invoices_customer_summary",
+    "enabled": true,
+    "priority": 45,
+    "patterns": [
+      "(?i)join\\s+ops[_ ]events\\s+and\\s+invoices[_ ]synthetic.*summari[sz]e\\s+key\\s+metrics\\s+by\\s+customer",
+      "(?i)ops[_ ]events.*invoices[_ ]synthetic.*key\\s+metrics.*customer"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer'), ''), NULLIF(TRIM(i.row_json->>'customer'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT s.row_json->>'event_id') AS event_count,\n    COUNT(DISTINCT i.row_json->>'invoice_id') AS invoice_count,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((s.row_json->>'expected_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_expected_amount,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((i.row_json->>'billed_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_billed_amount\nFROM dataset_rows s\nLEFT JOIN dataset_rows i\n    ON i.dataset_id = s.dataset_id\n    AND i.sheet_name = 'Invoices_Synthetic'\n    AND NULLIF(LOWER(TRIM(i.row_json->>'event_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'event_id')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\nGROUP BY 1\nORDER BY total_expected_amount DESC, event_count DESC\nLIMIT %(limit)s",
+    "description": "Customer summary join between Ops_Events and Invoices_Synthetic using expected and billed amount metrics."
+  },
+  {
+    "id": "68958372-fed8-4cfc-ad98-1ec55e33417c",
+    "intent": "ops_events_invoices_customer_variance_summary",
+    "enabled": true,
+    "priority": 46,
+    "patterns": [
+      "(?i)(compare|summari[sz]e|show).*(ops[_ ]events).*(invoices[_ ]synthetic).*(customer).*(expected|billed|variance|gap)",
+      "(?i)(expected|billed|variance|gap).*(customer).*(ops[_ ]events).*(invoices[_ ]synthetic)"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer'), ''), NULLIF(TRIM(i.row_json->>'customer'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT s.row_json->>'event_id') AS event_count,\n    COUNT(DISTINCT i.row_json->>'invoice_id') AS invoice_count,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((s.row_json->>'expected_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_expected_amount,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((i.row_json->>'billed_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_billed_amount,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((s.row_json->>'expected_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0) - COALESCE(NULLIF(regexp_replace((i.row_json->>'billed_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_value_gap\nFROM dataset_rows s\nLEFT JOIN dataset_rows i\n    ON i.dataset_id = s.dataset_id\n    AND i.sheet_name = 'Invoices_Synthetic'\n    AND NULLIF(LOWER(TRIM(i.row_json->>'event_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'event_id')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\nGROUP BY 1\nORDER BY total_value_gap DESC, total_expected_amount DESC\nLIMIT %(limit)s",
+    "description": "Customer summary of expected amount, billed amount, and value gap across Ops_Events and Invoices_Synthetic."
+  },
+  {
+    "id": "3578dd82-5364-468f-a1b5-0188aa0eb5e0",
+    "intent": "ops_events_invoices_uninvoiced_by_customer",
+    "enabled": true,
+    "priority": 47,
+    "patterns": [
+      "(?i)(uninvoiced|not invoiced|without invoice|missing invoice).*(customer)",
+      "(?i)(customer).*(uninvoiced|not invoiced|without invoice|missing invoice)"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT s.row_json->>'event_id') AS uninvoiced_event_count,\n    COALESCE(SUM(COALESCE(NULLIF(regexp_replace((s.row_json->>'expected_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)), 0) AS total_uninvoiced_expected_amount\nFROM dataset_rows s\nLEFT JOIN dataset_rows i\n    ON i.dataset_id = s.dataset_id\n    AND i.sheet_name = 'Invoices_Synthetic'\n    AND NULLIF(LOWER(TRIM(i.row_json->>'event_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'event_id')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\n  AND LOWER(TRIM(COALESCE(s.row_json->>'status', ''))) = 'completed'\n  AND i.row_index IS NULL\nGROUP BY 1\nORDER BY total_uninvoiced_expected_amount DESC, uninvoiced_event_count DESC\nLIMIT %(limit)s",
+    "description": "Completed Ops_Events without matching invoices, summarized by customer."
+  },
+  {
+    "id": "799aa108-4395-493b-a0b9-da09732b9f3d",
+    "intent": "ops_events_invoices_invoice_coverage_by_customer",
+    "enabled": true,
+    "priority": 48,
+    "patterns": [
+      "(?i)(invoice coverage|coverage summary|matched invoices|event count vs invoice count).*(customer)",
+      "(?i)(customer).*(invoice coverage|coverage summary|matched invoices|event count vs invoice count)"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer'), ''), NULLIF(TRIM(i.row_json->>'customer'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT s.row_json->>'event_id') AS event_count,\n    COUNT(DISTINCT i.row_json->>'invoice_id') AS invoice_count,\n    COUNT(DISTINCT s.row_json->>'event_id') - COUNT(DISTINCT i.row_json->>'invoice_id') AS uncovered_event_count\nFROM dataset_rows s\nLEFT JOIN dataset_rows i\n    ON i.dataset_id = s.dataset_id\n    AND i.sheet_name = 'Invoices_Synthetic'\n    AND NULLIF(LOWER(TRIM(i.row_json->>'event_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'event_id')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\nGROUP BY 1\nORDER BY uncovered_event_count DESC, event_count DESC\nLIMIT %(limit)s",
+    "description": "Customer-level invoice coverage summary between Ops_Events and Invoices_Synthetic."
+  },
+  {
+    "id": "abce6494-a024-4b9e-92bf-63db560d3b94",
+    "intent": "ops_events_invoices_billed_unbilled_status_by_customer",
+    "enabled": true,
+    "priority": 49,
+    "patterns": [
+      "(?i)(billed\\s+vs\\s+unbilled|unbilled\\s+vs\\s+billed|billing\\s+status\\s+summary).*(customer)",
+      "(?i)(customer).*(billed\\s+vs\\s+unbilled|unbilled\\s+vs\\s+billed|billing\\s+status\\s+summary)"
+    ],
+    "builder": null,
+    "sql_template": "SELECT\n    COALESCE(NULLIF(TRIM(s.row_json->>'customer'), ''), 'Unknown') AS customer,\n    COUNT(DISTINCT CASE\n        WHEN NULLIF(TRIM(i.row_json->>'invoice_id'), '') IS NOT NULL THEN s.row_json->>'event_id'\n        ELSE NULL\n    END) AS billed_event_count,\n    COUNT(DISTINCT CASE\n        WHEN NULLIF(TRIM(i.row_json->>'invoice_id'), '') IS NULL THEN s.row_json->>'event_id'\n        ELSE NULL\n    END) AS unbilled_event_count,\n    COALESCE(SUM(CASE\n        WHEN NULLIF(TRIM(i.row_json->>'invoice_id'), '') IS NOT NULL THEN COALESCE(NULLIF(regexp_replace((i.row_json->>'billed_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)\n        ELSE 0\n    END), 0) AS total_billed_amount,\n    COALESCE(SUM(CASE\n        WHEN NULLIF(TRIM(i.row_json->>'invoice_id'), '') IS NULL THEN COALESCE(NULLIF(regexp_replace((s.row_json->>'expected_amount'), '[^0-9.\\-]', '', 'g'), '')::numeric, 0)\n        ELSE 0\n    END), 0) AS total_unbilled_expected_amount\nFROM dataset_rows s\nLEFT JOIN dataset_rows i\n    ON i.dataset_id = s.dataset_id\n    AND i.sheet_name = 'Invoices_Synthetic'\n    AND NULLIF(LOWER(TRIM(i.row_json->>'event_id')), '') = NULLIF(LOWER(TRIM(s.row_json->>'event_id')), '')\nWHERE s.dataset_id = %(dataset_id)s\n  AND s.sheet_name = 'Ops_Events'\n  AND LOWER(TRIM(COALESCE(s.row_json->>'status', ''))) = 'completed'\nGROUP BY 1\nORDER BY total_unbilled_expected_amount DESC, unbilled_event_count DESC, billed_event_count DESC\nLIMIT %(limit)s",
+    "description": "Completed Ops_Events summarized by customer into billed versus unbilled event counts and amounts."
+  }
+]

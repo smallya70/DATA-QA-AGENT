@@ -1,0 +1,23 @@
+compare X across Y
+top N X in country or region
+count of X where Y
+This is the biggest reliability win.
+Strengthen semantic-role plus synonym mapping
+Right now new datasets still depend too much on column-name coincidence. We need stronger alias vocab for common business terms.
+
+Reduce ambiguous degradation
+If a question is simple and only one plausible sheet and one plausible measure exist, the planner should execute, not retreat.
+
+Log every failure path
+Capture route source, planner confidence, extracted filters, chosen measure, and final SQL for bad queries. Otherwise fixing issues stays reactive and slow.
+
+My assessment:
+
+current state: workable for demos and iterative use
+not foolproof for production
+probably reliable on covered patterns, still fragile on unseen “simple” phrasings
+If you want, I can do the next practical step now:
+
+add a failure log for every bad SQL ask so we can see exactly why simple queries fail
+build a regression suite from today’s failed questions
+harden the planner for the top 10 simplest business query patterns first

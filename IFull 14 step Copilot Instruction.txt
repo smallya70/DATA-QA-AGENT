@@ -1,0 +1,565 @@
+I want you to refactor and harden my analytics MVP so it becomes more reliable across different Excel sheets and multi-sheet workbooks.
+
+Context:
+My app already supports:
+- Excel/CSV upload
+- multiple sheets
+- joins across sheets
+- NL question to SQL
+- dashboard generation after SQL
+- insight layer
+
+Current problem:
+The planner is still making wrong intent decisions and wrong metric fallbacks.
+Examples of failures:
+- "Show first 20 rows from Sheet1" got routed to total_x / aggregate_scalar
+- "Describe Sheet1" got routed to SUM logic
+- "Show Exception Type and count from Summary Sheet" treated "count" as COUNT intent instead of an existing column
+- "List Exception Type and Count in Summary Sheet" aggregated instead of projecting existing summary columns
+- "Who are the top 10 customers by revenue in Sheet1?" degraded to MAX(amount) even though customer does not exist
+- "top customers by sales" picked unit_price instead of a derived sales/revenue metric
+- fixes for one sheet sometimes break another sheet
+
+I want a proper architecture, not local patches.
+
+==================================================
+PART 1 - ADD DATASET SEMANTIC PROFILING AFTER UPLOAD
+==================================================
+
+Immediately after file upload, build semantic metadata for each sheet.
+
+For each sheet detect and store:
+1. sheet name
+2. row count
+3. column count
+4. original column names
+5. cleaned column names
+6. inferred types:
+   - numeric
+   - categorical
+   - date
+   - datetime
+   - id-like
+   - free_text
+7. dimensions
+8. measures
+9. possible primary date column
+10. semantic roles for columns
+11. likely sheet type:
+   - raw transactional
+   - summary / pre-aggregated
+   - lookup / dimension
+   - inventory
+   - ticket/support
+   - finance/sales generic
+12. sample values
+13. numeric summaries
+14. distinct counts
+15. whether sheet appears pre-aggregated
+
+Store this as sheet_metadata and workbook_metadata.
+The planner must use this metadata before SQL generation instead of guessing directly from user text.
+
+==================================================
+PART 2 - ADD DERIVED METRIC DETECTION BEFORE PLANNING
+==================================================
+
+Derived metrics must be detected before the planner runs, not after SQL failure.
+
+Build a derived metric catalog per sheet using deterministic rules.
+
+Examples:
+1. If quantity and unit_price exist:
+   revenue = quantity * unit_price
+   sales = quantity * unit_price
+   order_value = quantity * unit_price
+   gross_sales = quantity * unit_price
+
+2. If revenue/sales and cost exist:
+   profit = revenue - cost
+   gross_profit = revenue - cost
+
+3. If profit and revenue exist:
+   margin_pct = profit / revenue
+   profit_margin = profit / revenue
+
+4. If expected_amount and actual_amount exist:
+   value_gap = expected_amount - actual_amount
+   variance = expected_amount - actual_amount
+   shortfall = expected_amount - actual_amount
+
+5. If billed_amount and expected_amount exist:
+   billing_gap = expected_amount - billed_amount
+   under_billed_amount = expected_amount - billed_amount
+
+6. If total_amount and invoiced_amount exist:
+   uninvoiced_amount = total_amount - invoiced_amount
+   amount_at_risk = total_amount - invoiced_amount
+
+7. If stock_qty and unit_price exist:
+   inventory_value = stock_qty * unit_price
+   stock_value = stock_qty * unit_price
+
+8. If stock_qty and reorder_level exist:
+   reorder_gap = reorder_level - stock_qty
+
+9. If closed_date and open_date exist:
+   resolution_days = closed_date - open_date
+   turnaround_time = closed_date - open_date
+
+Also add count-style business metrics:
+- record_count = COUNT(*)
+- order_count = COUNT(order_id) if order_id exists
+- ticket_count = COUNT(ticket_id) if ticket_id exists
+- customer_count = COUNT_DISTINCT(customer-like field)
+- product_count = COUNT_DISTINCT(product-like field)
+- country_count = COUNT_DISTINCT(country-like field)
+
+Store for each derived metric:
+- metric name
+- formula
+- required columns
+- confidence
+- canonical metric name
+- aliases
+
+==================================================
+PART 3 - ADD METRIC ALIAS RESOLUTION
+==================================================
+
+Build an alias layer so user wording maps to canonical metrics.
+
+Examples:
+- sales -> revenue
+- turnover -> revenue
+- gross sales -> revenue
+- order value -> revenue
+- earnings -> profit
+- gross profit -> profit
+- margin -> margin_pct
+- variance -> value_gap
+- delta -> value_gap
+- difference -> value_gap
+- qty -> quantity
+- units -> quantity
+- price -> unit_price
+
+Planner metric resolution order must be:
+1. exact physical column
+2. alias to canonical metric
+3. derived metric formula
+4. otherwise unsupported metric
+
+Very important:
+Do not fallback to an unrelated numeric column like unit_price when the requested metric is sales/revenue.
+If a metric cannot be resolved safely, return unsupported_metric or suggestions.
+
+==================================================
+PART 4 - ADD USER-DEFINED DERIVED METRICS
+==================================================
+
+Allow the user to define custom derived metrics.
+
+Need a simple registry model:
+- metric_name
+- formula
+- description
+- source sheet
+- validation status
+
+These user-defined metrics should be treated as first-class metrics by the planner after validation.
+
+Validation:
+- allow only known columns and approved operators/functions
+- no unsafe code execution
+- formulas must compile into safe SQL expressions
+
+Planner resolution order should become:
+1. physical column
+2. user-defined metric
+3. alias to canonical metric
+4. system-derived metric
+5. unsupported metric
+
+==================================================
+PART 5 - STRICT INTENT FAMILY SEPARATION
+==================================================
+
+Introduce strict deterministic intent families and precedence before aggregation logic.
+
+Intent families:
+1. row_preview
+2. describe_sheet
+3. projection
+4. ranking
+5. aggregate
+6. unsupported_query
+
+Examples:
+
+row_preview:
+- show first 20 rows from Sheet1
+- show rows from Sheet1
+- preview Sheet1
+
+describe_sheet:
+- describe Sheet1
+- summarize Sheet1
+- tell me about Summary sheet
+
+projection:
+- show exception_type and count from Summary
+- list product and country
+- display order_id, amount
+
+ranking:
+- top 10 products by revenue
+- highest amount by country
+- top country for each product
+
+aggregate:
+- total amount by country
+- average salary by department
+- sum of value_gap by exception_type
+
+unsupported_query:
+- top 10 customers by revenue in a sheet with no customer field
+
+Intent precedence must be:
+1. row_preview
+2. describe_sheet
+3. projection
+4. ranking
+5. aggregate
+6. unsupported_query
+
+If a query matches row_preview, describe_sheet, or projection, it must never fall through to aggregate patterns.
+
+==================================================
+PART 6 - FIX AGGREGATION TRIGGER LOGIC
+==================================================
+
+Current bug:
+Non-aggregation queries are being routed into total_x / aggregate_scalar.
+
+Fix this.
+
+pattern_01_total_metric should only match when explicit aggregation language exists:
+- total
+- sum
+- overall
+- combined
+- aggregate
+- total of
+- sum of
+
+Do NOT hardcode metric names like amount.
+Metric detection must remain schema-driven.
+
+Words that must never trigger aggregate logic by themselves:
+- show
+- display
+- list
+- preview
+- first
+- rows
+- describe
+- tell me about
+
+Add guardrail:
+If intent_family is row_preview, describe_sheet, or projection:
+- aggregation = None
+- group_by = []
+- skip_aggregate_pattern_matching = True
+
+==================================================
+PART 7 - FIX PROJECTION VS AGGREGATION CONFLICT
+==================================================
+
+Projection queries must have precedence over aggregation keyword overrides.
+
+Example bug:
+"Show Exception Type and count from Summary Sheet"
+was classified as projection, but later "count" triggered COUNT override.
+
+Fix rules:
+1. If query_type == projection:
+   - do not apply SUM/AVG/MAX/MIN/COUNT auto-corrections
+   - treat tokens like count, total, average as potential column names first
+2. If a requested token matches an existing column in the selected sheet, prefer projection over aggregation
+3. For projection queries:
+   - aggregation = None
+   - group_by = []
+   - answer_type = table
+
+Also fix parser so both requested columns are preserved across "and".
+
+==================================================
+PART 8 - HANDLE PRE-AGGREGATED SUMMARY SHEETS
+==================================================
+
+If the selected sheet appears pre-aggregated (for example contains fields like count, total_value_gap, summary metrics), then:
+- do not re-aggregate projected columns
+- do not apply COUNT(count)
+- do not SUM(count) unless the user explicitly asks for that
+- default answer for projection should be table
+- optional chart can use raw numeric column values directly
+
+Examples that should be projection:
+- list exception_type and count in Summary sheet
+- show exception_type and total_value_gap from Summary sheet
+
+==================================================
+PART 9 - HANDLE UNSUPPORTED ENTITY/METRIC QUERIES SAFELY
+==================================================
+
+For ranking/aggregate questions like:
+- top 10 customers by revenue
+validate separately:
+A. requested entity/dimension
+B. requested metric
+
+If entity is missing, do not silently substitute product/country/order_id.
+If metric is missing, do not silently substitute a random numeric column.
+
+If unresolved, return:
+- unsupported_dimension
+- unsupported_metric
+or
+- unsupported_query
+
+Include:
+- requested_dimension
+- requested_metric
+- available dimensions
+- available metrics
+- suggestions
+
+Very important:
+Do not answer:
+"top 10 customers by revenue"
+with:
+"max amount"
+
+That is a wrong-intent fallback and must be blocked.
+
+==================================================
+PART 10 - SUPPORT DESCRIBE SHEET PROPERLY
+==================================================
+
+Add a dedicated describe_sheet query type.
+
+For:
+- describe Sheet1
+- summarize Summary sheet
+- tell me about Sheet1
+
+Return:
+- sheet name
+- row count
+- column count
+- column names
+- inferred column types
+- dimensions
+- measures
+- possible derived metrics
+- whether raw or pre-aggregated
+- notable observations
+
+Do not send describe-sheet queries through aggregate SQL logic unless specifically needed for profile statistics.
+
+==================================================
+PART 11 - SUPPORT ROW PREVIEW PROPERLY
+==================================================
+
+Add a dedicated row_preview query type.
+
+For:
+- show first 20 rows from sheet Sheet1
+- preview Sheet1
+- show rows from Sheet1
+
+Return:
+- table preview
+- no aggregation
+- no SUM/MAX/COUNT override
+- row limit respected
+
+==================================================
+PART 12 - JOIN-AWARE PLANNING SAFETY
+==================================================
+
+Since joins across sheets already exist, harden join-aware planning.
+
+Add:
+1. chosen anchor sheet
+2. chosen join path
+3. expected grain before join
+4. expected grain after join
+5. row multiplication detection
+6. warning/rejection when join would inflate totals incorrectly
+
+Do not add arbitrary nested SQL yet.
+Focus on join correctness and aggregate correctness first.
+
+==================================================
+PART 13 - DASHBOARD SAFETY RULES
+==================================================
+
+Dashboard is already generated after SQL.
+Keep that architecture.
+
+But fix these rules:
+1. If query_type == projection:
+   - default output should be table
+   - optional chart only if a real dimension + numeric column pair exists
+   - chart aggregation should be NONE / raw value, not COUNT()
+2. If sheet is pre-aggregated:
+   - do not re-aggregate summary metrics automatically
+3. If query result already contains aggregate fields:
+   - dashboard must respect result grain
+4. Show applied query filters and chart filters separately, then merged as effective filters
+
+==================================================
+PART 14 - LLM INSIGHTS FOR ALL SHEETS AFTER UPLOAD
+==================================================
+
+After upload, generate grounded sheet-wise insights for all sheets.
+
+Do not use raw sheet text directly.
+Use structured sheet metadata and computed statistics.
+
+For each sheet, LLM should produce:
+- what the sheet appears to represent
+- whether raw or pre-aggregated
+- key dimensions
+- key measures
+- detected derived metrics
+- notable observations
+- 3 suggested questions
+
+Also generate workbook-level overview.
+
+This insight layer must be grounded and must not invent columns or business meaning.
+
+==================================================
+PART 15 - DEBUG OUTPUT
+==================================================
+
+Add debug output for every query:
+
+- raw question
+- selected sheet
+- intent_family
+- query_type
+- matched deterministic pattern
+- requested_dimension
+- resolved_dimension
+- requested_metric
+- canonical_metric
+- resolved_metric_type (physical / user_defined / derived / unsupported)
+- formula if derived
+- selected columns
+- filters
+- join path
+- expected grain
+- aggregation
+- aggregation blocked reason
+- generated SQL
+- fallback blocked reason
+- unsupported reason if any
+
+==================================================
+PART 16 - REGRESSION TESTS
+==================================================
+
+Add regression tests for at least these cases:
+
+A. Row preview
+- Show first 20 rows from Sheet1
+
+B. Describe sheet
+- Describe Sheet1
+- Describe Summary sheet
+
+C. Projection
+- Show Exception Type and count from Summary Sheet
+- Show exception_type and total_value_gap from Summary Sheet
+- Show product and country
+
+D. Aggregate
+- Total amount by country
+- Average amount by product
+- Total value_gap by exception_type
+
+E. Ranking
+- Top 5 products by amount
+- Highest amount by country
+- Top country for each product
+
+F. Derived metric
+- Top customers by revenue
+- Top customers by sales
+- Total inventory value by warehouse
+- Profit by product
+
+G. Unsupported
+- Top 10 customers by revenue in a sheet with no customer column
+- Best vendor by sales in a sheet with no vendor column
+
+H. Pre-aggregated summary safety
+- List exception_type and count in Summary sheet
+- No COUNT override
+- No SUM(count) unless explicitly requested
+
+I. Cross-sheet safety
+- fixes for one sheet must not break another sheet
+
+For each regression test, assert:
+- selected sheet
+- intent family
+- query type
+- selected columns or group_by
+- aggregation or no aggregation
+- metric resolution type
+- SQL contains expected shape
+- SQL does not contain wrong fallback
+
+==================================================
+PART 17 - IMPLEMENTATION ORDER
+==================================================
+
+Please implement in this order:
+
+1. Show updated architecture and flow
+2. Show metadata models for sheet profiling and metrics
+3. Show deterministic intent family router
+4. Show derived metric catalog + alias resolution
+5. Show planner changes
+6. Show join/grain validation additions
+7. Show dashboard safety updates
+8. Show LLM sheet-wise insight layer
+9. Show regression tests
+10. Then run tests
+
+==================================================
+PART 18 - GOAL
+==================================================
+
+I want a planner that is:
+- sheet-aware
+- schema-aware
+- derived-metric-aware
+- join-aware
+- safer for production
+
+Priority:
+1. semantic correctness
+2. deterministic routing
+3. safe metric resolution
+4. no fabricated fallback
+5. regression-safe behavior across different sheets
+6. grounded dashboard and insights
+
+Do not patch one query at a time.
+Refactor the planner and metadata flow so the same class of issues stops happening across sheets.

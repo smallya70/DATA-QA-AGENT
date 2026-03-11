@@ -1,0 +1,42 @@
+Streamlit changes to support multi-sheet join detection:
+
+1) Point backend URL to your FastAPI.
+2) When upload response returns relationships, store and display them.
+3) Keep one selected dataset_id.
+4) Use /ask_sql for real analytics.
+
+Example upload display after successful upload:
+
+out = res.json()
+st.success(f"Uploaded: {out['name']} ({out['rows']} rows)")
+if out.get('sheets'):
+    st.write('Sheets:', ', '.join(out['sheets']))
+rels = (out.get('relationships') or {}).get('relationships', [])
+if rels:
+    st.subheader('Detected joins')
+    for r in rels[:10]:
+        st.write(f"{r['left']}.{r['left_col']} ↔ {r['right']}.{r['right_col']}  |  score={r['score']}")
+
+Example Ask SQL block:
+
+payload = {
+    "dataset_id": st.session_state["selected_dataset_id"],
+    "question": q,
+    "max_rows": 200,
+}
+r = requests.post(f"{BACKEND}/ask_sql", json=payload, timeout=120)
+out = r.json()
+if r.status_code == 200:
+    st.subheader('SQL')
+    st.code(out.get('sql', ''), language='sql')
+    rows = out.get('rows', [])
+    if rows:
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True)
+        # basic auto chart
+        num_cols = df.select_dtypes(include='number').columns.tolist()
+        cat_cols = [c for c in df.columns if c not in num_cols]
+        if num_cols and cat_cols:
+            st.bar_chart(df.set_index(cat_cols[0])[num_cols[0]])
+else:
+    st.error(out)

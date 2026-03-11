@@ -1,0 +1,14 @@
+# Streamlit Analytics Admin Snippet
+
+if st.sidebar.checkbox("Manage Business Rules"):
+    st.subheader("Rules Registry")
+    # Fetch existing rules from Supabase
+    rules = sb.table("rules_registry").select("*").execute().data
+
+    # UI for adding a new Rule (Intent -> SQL Template)
+    with st.form("new_rule"):
+        pattern = st.text_input("Question Pattern (e.g., 'total profit')")
+        template = st.text_area("SQL Template (Use %(dataset_id)s)")
+        if st.form_submit_button("Save Rule"):
+            sb.table("rules_registry").insert({"pattern": pattern, "sql": template}).execute()
+            st.success("Rule saved!")

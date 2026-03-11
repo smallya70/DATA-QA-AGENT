@@ -45,6 +45,7 @@ $targets = Get-CimInstance Win32_Process |
         $_.CommandLine -match $projectRootEscaped -and
         (
             $_.CommandLine -like "*uvicorn app.main:app*" -or
+            $_.CommandLine -like "*uvicorn app.main:app --port 8099*" -or
             $_.CommandLine -like "*streamlit run app/streamlit_app.py*" -or
             $_.CommandLine -like "*streamlit run app\streamlit_app.py*"
         )
@@ -62,7 +63,7 @@ foreach ($proc in $targets) {
     }
 }
 
-$listenerPorts = @(8092, 8501)
+$listenerPorts = @(8092, 8094, 8099, 8501)
 foreach ($port in $listenerPorts) {
     $listeners = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     foreach ($listener in $listeners) {
